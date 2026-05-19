@@ -7,6 +7,7 @@ import random
 import socket
 import sqlite3
 import sys
+import time
 from typing import Any, Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -156,6 +157,30 @@ async def mark_message_processed(chat_id: int, message_id: int) -> bool:
             return False
 
 
+async def mark_callback_processed(user_id: int, message_id: int, callback_data: str, ttl_seconds: int = 3) -> bool:
+    key = f"{user_id}:{message_id}:{callback_data}"
+    now_ts = time.time()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM processed_callbacks WHERE created_ts < ?", (now_ts - 60,))
+        cur = await db.execute("SELECT created_ts FROM processed_callbacks WHERE callback_key = ?", (key,))
+        row = await cur.fetchone()
+        if row and now_ts - float(row[0]) < ttl_seconds:
+            await db.commit()
+            return False
+        await db.execute(
+            """
+            INSERT INTO processed_callbacks (callback_key, created_ts, created_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(callback_key) DO UPDATE SET
+                created_ts = excluded.created_ts,
+                created_at = excluded.created_at
+            """,
+            (key, now_ts, now_iso()),
+        )
+        await db.commit()
+        return True
+
+
 class UpdateDeduplicateMiddleware(BaseMiddleware):
     async def __call__(
         self,
@@ -177,6 +202,21 @@ class MessageDeduplicateMiddleware(BaseMiddleware):
     ) -> Any:
         if not await mark_message_processed(event.chat.id, event.message_id):
             return None
+        return await handler(event, data)
+
+
+class CallbackDeduplicateMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Callable[[CallbackQuery, dict[str, Any]], Awaitable[Any]],
+        event: CallbackQuery,
+        data: dict[str, Any],
+    ) -> Any:
+        if event.message and event.data:
+            ok = await mark_callback_processed(event.from_user.id, event.message.message_id, event.data)
+            if not ok:
+                await event.answer()
+                return None
         return await handler(event, data)
 
 
@@ -317,6 +357,15 @@ async def init_db() -> None:
             )
             """
         )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS processed_callbacks (
+                callback_key TEXT PRIMARY KEY,
+                created_ts REAL NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
         await db.commit()
 
 
@@ -442,8 +491,7 @@ async def edit_or_answer(target: Message | CallbackQuery, text: str, markup: Inl
     if isinstance(target, CallbackQuery):
         with suppress(TelegramBadRequest):
             await target.message.edit_text(text, reply_markup=markup)
-            return
-        await target.message.answer(text, reply_markup=markup)
+        return
     else:
         await target.answer(text, reply_markup=markup)
 
@@ -1215,6 +1263,7 @@ async def main() -> None:
     dp = Dispatcher(storage=MemoryStorage())
     dp.update.outer_middleware(UpdateDeduplicateMiddleware())
     dp.message.outer_middleware(MessageDeduplicateMiddleware())
+    dp.callback_query.outer_middleware(CallbackDeduplicateMiddleware())
     dp.include_router(router)
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
