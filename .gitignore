@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.db
+.env
+start_bot.bat
+*.log
+venv/
+.venv/
+env/
+*.session
+Новий Исходный файл Python.py
