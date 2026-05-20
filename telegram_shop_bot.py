@@ -41,7 +41,7 @@ DB_PATH = os.getenv("DB_PATH", "shop.sqlite3")
 CARD_NUMBER = os.getenv("CARD_NUMBER", "4874070023914656")
 CARD_OWNER = os.getenv("CARD_OWNER", "Данило Р.")
 MANAGER_URL = os.getenv("MANAGER_URL", "https://t.me/ManagerFDSMARKETUA")
-REVIEWS_URL = os.getenv("REVIEWS_URL", "https://t.me/FDSMARKETUA_reviews")
+REVIEWS_URL = os.getenv("REVIEWS_URL", "https://t.me/otzivibstyrnir1")
 
 STAR_BUY_RATE = 0.8
 STAR_SELL_RATE = 0.38
